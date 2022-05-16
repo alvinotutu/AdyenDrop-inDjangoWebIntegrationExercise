@@ -3,10 +3,11 @@ from django_countries.fields import CountryField
 from django_countries.widgets import CountrySelectWidget
 
 
-PAYMENT_CHOICES = (
-    ('S', 'Stripe'),
-    ('P', 'PayPal')
-)
+PAYMENT_CHOICES = [
+    ('A', 'Adyen'),
+    ('B', 'Option 2'),
+    ('C', 'Option 3')
+]
 
 
 class CheckoutForm(forms.Form):

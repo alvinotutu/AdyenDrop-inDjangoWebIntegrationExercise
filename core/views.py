@@ -1,7 +1,13 @@
+from os import environ
+from django.urls import reverse
+
 import random
 import string
+import requests
 
-import stripe
+from dotenv import load_dotenv
+load_dotenv()
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -14,8 +20,6 @@ from django.views.generic import ListView, DetailView, View
 
 from .forms import CheckoutForm, CouponForm, RefundForm, PaymentForm
 from .models import Item, OrderItem, Order, Address, Payment, Coupon, Refund, UserProfile
-
-stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 def create_ref_code():
@@ -193,10 +197,14 @@ class CheckoutView(View):
 
                 payment_option = form.cleaned_data.get('payment_option')
 
-                if payment_option == 'S':
-                    return redirect('core:payment', payment_option='stripe')
-                elif payment_option == 'P':
-                    return redirect('core:payment', payment_option='paypal')
+                if payment_option == 'A':
+                    return redirect('core:payment', payment_option='adyen')
+                elif payment_option == 'B':
+                    # process option B
+                    pass
+                elif payment_option == 'C':
+                    # process option C
+                    pass
                 else:
                     messages.warning(
                         self.request, "Invalid payment option selected")
@@ -210,139 +218,145 @@ class PaymentView(View):
     def get(self, *args, **kwargs):
         order = Order.objects.get(user=self.request.user, ordered=False)
         if order.billing_address:
+
+            app_url = environ.get('APP_URL')
+            url = 'https://checkout-test.adyen.com/v68/sessions'
+            api_key = environ.get('ADYEN_API_KEY')
+            client_key = environ.get('ADYEN_CLIENT_KEY')
+            merchant_account = environ.get('ADYEN_MERCHANT_ACCOUNT_NAME')
+            amount_value = order.get_total()
+            amount_value = str(amount_value)
+            amount_currency = 'USD'
+            country_code = 'NL'
+            payment_reference = 'alvin_checkoutChallenge'
+            data='{"merchantAccount": "'+merchant_account+'", "amount": {"value": '+amount_value+', "currency": "'+amount_currency+'"}, "returnUrl": "'+app_url+'/payment/adyen", "reference": "'+payment_reference+'", "countryCode": "'+country_code+'"}'
+
+            response = requests.post(
+                url,
+                headers={
+                    'x-API-key': api_key,
+                    'content-type': 'application/json'
+                },
+                data = data
+            )
+
+            data = response.json()
+            
+            session_id = data['id']
+            session_data = data['sessionData']
+
             context = {
                 'order': order,
-                'DISPLAY_COUPON_FORM': False,
-                'STRIPE_PUBLIC_KEY' : settings.STRIPE_PUBLIC_KEY
+                'client_key': client_key,
+                'session_id': session_id,
+                'session_data': session_data
             }
-            userprofile = self.request.user.userprofile
-            if userprofile.one_click_purchasing:
-                # fetch the users card list
-                cards = stripe.Customer.list_sources(
-                    userprofile.stripe_customer_id,
-                    limit=3,
-                    object='card'
-                )
-                card_list = cards['data']
-                if len(card_list) > 0:
-                    # update the context with the default card
-                    context.update({
-                        'card': card_list[0]
-                    })
+
             return render(self.request, "payment.html", context)
         else:
-            messages.warning(
-                self.request, "You have not added a billing address")
+            messages.warning(self.request, "You have not added a billing address")
             return redirect("core:checkout")
 
-    def post(self, *args, **kwargs):
-        order = Order.objects.get(user=self.request.user, ordered=False)
-        form = PaymentForm(self.request.POST)
-        userprofile = UserProfile.objects.get(user=self.request.user)
-        if form.is_valid():
-            token = form.cleaned_data.get('stripeToken')
-            save = form.cleaned_data.get('save')
-            use_default = form.cleaned_data.get('use_default')
 
-            if save:
-                if userprofile.stripe_customer_id != '' and userprofile.stripe_customer_id is not None:
-                    customer = stripe.Customer.retrieve(
-                        userprofile.stripe_customer_id)
-                    customer.sources.create(source=token)
+def post(self, *args, **kwargs):
+    order = Order.objects.get(user=self.request.user, ordered=False)
+    form = PaymentForm(self.request.POST)
+    userprofile = UserProfile.objects.get(user=self.request.user)
+    if form.is_valid():
+        token = form.cleaned_data.get('stripeToken')
+        save = form.cleaned_data.get('save')
+        use_default = form.cleaned_data.get('use_default')
 
-                else:
-                    customer = stripe.Customer.create(
-                        email=self.request.user.email,
-                    )
-                    customer.sources.create(source=token)
-                    userprofile.stripe_customer_id = customer['id']
-                    userprofile.one_click_purchasing = True
-                    userprofile.save()
+        if save:
+            if userprofile.stripe_customer_id != '' and userprofile.stripe_customer_id is not None:
+                customer = stripe.Customer.retrieve(
+                    userprofile.stripe_customer_id)
+                customer.sources.create(source=token)
 
-            amount = int(order.get_total() * 100)
+            else:
+                customer = stripe.Customer.create(
+                    email=self.request.user.email,
+                )
+                customer.sources.create(source=token)
+                userprofile.stripe_customer_id = customer['id']
+                userprofile.one_click_purchasing = True
+                userprofile.save()
 
-            try:
+        amount = int(order.get_total() * 100)
 
-                if use_default or save:
-                    # charge the customer because we cannot charge the token more than once
-                    charge = stripe.Charge.create(
-                        amount=amount,  # cents
-                        currency="usd",
-                        customer=userprofile.stripe_customer_id
-                    )
-                else:
-                    # charge once off on the token
-                    charge = stripe.Charge.create(
-                        amount=amount,  # cents
-                        currency="usd",
-                        source=token
-                    )
+        try:
 
-                # create the payment
-                payment = Payment()
-                payment.stripe_charge_id = charge['id']
-                payment.user = self.request.user
-                payment.amount = order.get_total()
-                payment.save()
+            if use_default or save:
+                # charge the customer because we cannot charge the token more than once
+                pass
+            else:
+                # charge once off on the token
+                pass
+            # create the payment
+            payment = Payment()
+            payment.stripe_charge_id = charge['id']
+            payment.user = self.request.user
+            payment.amount = order.get_total()
+            payment.save()
 
-                # assign the payment to the order
+            # assign the payment to the order
 
-                order_items = order.items.all()
-                order_items.update(ordered=True)
-                for item in order_items:
-                    item.save()
+            order_items = order.items.all()
+            order_items.update(ordered=True)
+            for item in order_items:
+                item.save()
 
-                order.ordered = True
-                order.payment = payment
-                order.ref_code = create_ref_code()
-                order.save()
+            order.ordered = True
+            order.payment = payment
+            order.ref_code = create_ref_code()
+            order.save()
 
-                messages.success(self.request, "Your order was successful!")
-                return redirect("/")
+            messages.success(self.request, "Your order was successful!")
+            return redirect("/")
 
-            except stripe.error.CardError as e:
-                body = e.json_body
-                err = body.get('error', {})
-                messages.warning(self.request, f"{err.get('message')}")
-                return redirect("/")
+        except stripe.error.CardError as e:
+            body = e.json_body
+            err = body.get('error', {})
+            messages.warning(self.request, f"{err.get('message')}")
+            return redirect("/")
 
-            except stripe.error.RateLimitError as e:
-                # Too many requests made to the API too quickly
-                messages.warning(self.request, "Rate limit error")
-                return redirect("/")
+        except stripe.error.RateLimitError as e:
+            # Too many requests made to the API too quickly
+            messages.warning(self.request, "Rate limit error")
+            return redirect("/")
 
-            except stripe.error.InvalidRequestError as e:
-                # Invalid parameters were supplied to Stripe's API
-                print(e)
-                messages.warning(self.request, "Invalid parameters")
-                return redirect("/")
+        except stripe.error.InvalidRequestError as e:
+            # Invalid parameters were supplied to Stripe's API
+            print(e)
+            messages.warning(self.request, "Invalid parameters")
+            return redirect("/")
 
-            except stripe.error.AuthenticationError as e:
-                # Authentication with Stripe's API failed
-                # (maybe you changed API keys recently)
-                messages.warning(self.request, "Not authenticated")
-                return redirect("/")
+        except stripe.error.AuthenticationError as e:
+            # Authentication with Stripe's API failed
+            # (maybe you changed API keys recently)
+            messages.warning(self.request, "Not authenticated")
+            return redirect("/")
 
-            except stripe.error.APIConnectionError as e:
-                # Network communication with Stripe failed
-                messages.warning(self.request, "Network error")
-                return redirect("/")
+        except stripe.error.APIConnectionError as e:
+            # Network communication with Stripe failed
+            messages.warning(self.request, "Network error")
+            return redirect("/")
 
-            except stripe.error.StripeError as e:
-                # Display a very generic error to the user, and maybe send
-                # yourself an email
-                messages.warning(
-                    self.request, "Something went wrong. You were not charged. Please try again.")
-                return redirect("/")
+        except stripe.error.StripeError as e:
+            # Display a very generic error to the user, and maybe send
+            # yourself an email
+            messages.warning(
+                self.request, "Something went wrong. You were not charged. Please try again.")
+            return redirect("/")
 
-            except Exception as e:
-                # send an email to ourselves
-                messages.warning(
-                    self.request, "A serious error occurred. We have been notifed.")
-                return redirect("/")
+        except Exception as e:
+            # send an email to ourselves
+            messages.warning(
+                self.request, "A serious error occurred. We have been notifed.")
+            return redirect("/")
 
-        messages.warning(self.request, "Invalid data received")
-        return redirect("/payment/stripe/")
+    messages.warning(self.request, "Invalid data received")
+    return redirect("/payment/stripe/")
 
 
 class HomeView(ListView):
