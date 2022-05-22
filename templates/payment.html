@@ -58,7 +58,8 @@ const configuration = {
           hasHolderName: true,
           holderNameRequired: true,
           billingAddressRequired: true,
-          name: "Credit or debit card"
+          name: "Credit or debit card",
+          allow3DS2: true
       }
   }
 };
@@ -67,17 +68,28 @@ async function startCheckout() {
   const checkout = await createAdyenCheckout(configuration);
 
   const dropinComponent = checkout.create('dropin').mount('#dropin-container');
-  dropinComponent.setStatus('error', { message: 'Something went wrong.'});
+  // dropinComponent.setStatus('error', { message: 'Something went wrong.'});
 }
 
 async function finalizeCheckout() {
     try {
-        const checkout = await createAdyenCheckout({id: sessionId});
+        
+        // Create an instance of AdyenCheckout to handle the shopper returning to your website.
+        // Configure the instance with the sessionId you extracted from the returnUrl.
+        
+        
+        //const checkout = await createAdyenCheckout(configuration);
 
-        //checkout.submitDetails({details: {redirectResult}});
+        const checkout = await createAdyenCheckout({id: sessionId});
+ 
+        // Submit the redirectResult value you extracted from the returnUrl.
+        checkout.submitDetails({ details: { redirectResult } });
+
+                
     } catch (error) {
-        console.error(error);
-        alert("Error occurred. Look at console for details");
+        onError: (error, component) => {
+        console.error(error.name, error.message, component);
+    }
     }
 }
 

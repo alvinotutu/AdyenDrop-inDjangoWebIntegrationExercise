@@ -1,3 +1,14 @@
+from .models import Item, OrderItem, Order, Address, Payment, Coupon, Refund, UserProfile
+from .forms import CheckoutForm, CouponForm, RefundForm, PaymentForm
+from django.views.generic import ListView, DetailView, View
+from django.utils import timezone
+from django.shortcuts import render, get_object_or_404
+from django.shortcuts import redirect
+from django.core.exceptions import ObjectDoesNotExist
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.decorators import login_required
+from django.contrib import messages
+from django.conf import settings
 from os import environ
 from django.urls import reverse
 
@@ -7,19 +18,6 @@ import requests
 
 from dotenv import load_dotenv
 load_dotenv()
-
-from django.conf import settings
-from django.contrib import messages
-from django.contrib.auth.decorators import login_required
-from django.contrib.auth.mixins import LoginRequiredMixin
-from django.core.exceptions import ObjectDoesNotExist
-from django.shortcuts import redirect
-from django.shortcuts import render, get_object_or_404
-from django.utils import timezone
-from django.views.generic import ListView, DetailView, View
-
-from .forms import CheckoutForm, CouponForm, RefundForm, PaymentForm
-from .models import Item, OrderItem, Order, Address, Payment, Coupon, Refund, UserProfile
 
 
 def create_ref_code():
@@ -50,7 +48,7 @@ class CheckoutView(View):
                 'form': form,
                 'couponform': CouponForm(),
                 'order': order,
-                'DISPLAY_COUPON_FORM': True
+                'DISPLAY_COUPON_FORM': False
             }
 
             shipping_address_qs = Address.objects.filter(
@@ -84,7 +82,7 @@ class CheckoutView(View):
                 use_default_shipping = form.cleaned_data.get(
                     'use_default_shipping')
                 if use_default_shipping:
-                    print("Using the defualt shipping address")
+                    print("Using the default shipping address")
                     address_qs = Address.objects.filter(
                         user=self.request.user,
                         address_type='S',
@@ -147,7 +145,7 @@ class CheckoutView(View):
                     order.save()
 
                 elif use_default_billing:
-                    print("Using the defualt billing address")
+                    print("Using the default billing address")
                     address_qs = Address.objects.filter(
                         user=self.request.user,
                         address_type='B',
@@ -224,12 +222,13 @@ class PaymentView(View):
             api_key = environ.get('ADYEN_API_KEY')
             client_key = environ.get('ADYEN_CLIENT_KEY')
             merchant_account = environ.get('ADYEN_MERCHANT_ACCOUNT_NAME')
-            amount_value = order.get_total()
-            amount_value = str(amount_value)
+            amount_value = str(order.get_total()*100)
             amount_currency = 'USD'
             country_code = 'NL'
             payment_reference = 'alvin_checkoutChallenge'
-            data='{"merchantAccount": "'+merchant_account+'", "amount": {"value": '+amount_value+', "currency": "'+amount_currency+'"}, "returnUrl": "'+app_url+'/payment/adyen", "reference": "'+payment_reference+'", "countryCode": "'+country_code+'"}'
+            data = '{"merchantAccount": "'+merchant_account+'", "amount": {"value": '+amount_value+', "currency": "'+amount_currency + \
+                '"}, "returnUrl": "'+app_url+'/payment/adyen", "reference": "' + \
+                payment_reference+'", "countryCode": "'+country_code+'"}'
 
             response = requests.post(
                 url,
@@ -237,11 +236,11 @@ class PaymentView(View):
                     'x-API-key': api_key,
                     'content-type': 'application/json'
                 },
-                data = data
+                data=data
             )
 
             data = response.json()
-            
+
             session_id = data['id']
             session_data = data['sessionData']
 
@@ -254,7 +253,8 @@ class PaymentView(View):
 
             return render(self.request, "payment.html", context)
         else:
-            messages.warning(self.request, "You have not added a billing address")
+            messages.warning(
+                self.request, "You have not added a billing address")
             return redirect("core:checkout")
 
 
