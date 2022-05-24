@@ -2,7 +2,7 @@
 
 {% block extra_head %}
 
-<link rel="stylesheet" href="https://checkoutshopper-test.adyen.com/checkoutshopper/sdk/5.14.0/adyen.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://checkoutshopper-test.adyen.com/checkoutshopper/sdk/5.14.0/adyen.css" integrity="sha384-Dm1w8jaVOWA8rxpzkxA41DIyw5VlBjpoMTPfAijlfepYGgLKF+hke3NKeU/KTX7t" crossorigin="anonymous">
 
 {% endblock extra_head %}
 
@@ -25,20 +25,31 @@
 
     </div>
 </main>
-
+<form method="POST" action="{{ request.path }}" class="ajax">
+  {% csrf_token %}
+</form>
 {% endblock content %}
 
 {% block extra_scripts %}
 
-<script src="https://checkoutshopper-test.adyen.com/checkoutshopper/sdk/5.14.0/adyen.js" crossorigin="anonymous"></script>
+<script src="https://checkoutshopper-test.adyen.com/checkoutshopper/sdk/5.14.0/adyen.js" integrity="sha384-JsWtX9H7PkCMYb50ZDb4AdPdVNcPDx/O+aUYtLyLxU3D04jiqFEqnLKMDUIWxBpv" crossorigin="anonymous"></script>
 
 <script type="text/javascript">
 const sessionId = '{{ session_id }}';
 const sessionData = '{{ session_data }}';
+const clientKey = '{{ client_key }}';
+//come back later
+//const type = JSON.parse(document.getElementById('integration-type').innerHTML);
+
+// Used to finalize a checkout call in case of redirect
+const urlParams = new URLSearchParams(window.location.search);
+const redirectSessionId = urlParams.get('sessionId'); // Unique identifier for the payment session
+const redirectResult = urlParams.get('redirectResult');
+
 
 const configuration = {
   environment: 'test', // Change to 'live' for the live environment.
-  clientKey: '{{ client_key }}', // Public key used for client-side authentication: https://docs.adyen.com/development-resources/client-side-authentication
+  clientKey: clientKey, // Public key used for client-side authentication: https://docs.adyen.com/development-resources/client-side-authentication
   session: {
     id: sessionId, // Unique identifier for the payment session.
     sessionData: sessionData // The payment session data.
@@ -47,7 +58,7 @@ const configuration = {
       console.info(result, component);
   },
   onError: (error, component) => {
-      alert(error.message);
+      
       console.error(error.name, error.message, error.stack, component);
   },
   paymentMethodsConfiguration: {
@@ -80,11 +91,14 @@ async function finalizeCheckout() {
         
         //const checkout = await createAdyenCheckout(configuration);
 
-        const checkout = await createAdyenCheckout({id: sessionId});
+        const checkout = await createAdyenCheckout({id: redirectSessionId});
  
         // Submit the redirectResult value you extracted from the returnUrl.
         checkout.submitDetails({ details: { redirectResult } });
 
+        // check payment/details to find out status of payment
+        response = callServer('/payment/details', {'redirectResult':redirectResult})
+        dropin.setStatus(response.resultCode);
                 
     } catch (error) {
         onError: (error, component) => {
@@ -103,7 +117,8 @@ async function callServer(url, data) {
 		method: "POST",
 		body: data ? JSON.stringify(data) : "",
 		headers: {
-			"Content-Type": "application/json"
+			"Content-Type": "application/json",
+      "X-CSRFToken": $('[name=csrfmiddlewaretoken]').val()
 		}
 	});
 
@@ -111,29 +126,15 @@ async function callServer(url, data) {
 }
 
 // Handles responses sent from your server to the client
-function handleServerResponse(res, component) {
-	if (res.action) {
-		component.handleAction(res.action);
-	} else {
-		switch (res.resultCode) {
-			case "Authorised":
-				window.location.href = "/result/success";
-				break;
-			case "Pending":
-			case "Received":
-				window.location.href = "/result/pending";
-				break;
-			case "Refused":
-				window.location.href = "/result/failed";
-				break;
-			default:
-				window.location.href = "/result/error";
-				break;
-		}
-	}
+
+if (!redirectSessionId) {
+    startCheckout();
+}
+else {
+    // existing session: complete Checkout
+    finalizeCheckout();
 }
 
-    startCheckout();
 </script>
 
 {% endblock extra_scripts %}

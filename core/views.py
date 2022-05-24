@@ -1,3 +1,4 @@
+from urllib import request
 from .models import Item, OrderItem, Order, Address, Payment, Coupon, Refund, UserProfile
 from .forms import CheckoutForm, CouponForm, RefundForm, PaymentForm
 from django.views.generic import ListView, DetailView, View
@@ -8,6 +9,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from os import environ
 from django.urls import reverse
@@ -15,7 +17,9 @@ from django.urls import reverse
 import random
 import string
 import requests
+import json
 
+from django.http import JsonResponse
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -214,6 +218,7 @@ class CheckoutView(View):
 
 class PaymentView(View):
     def get(self, *args, **kwargs):
+
         order = Order.objects.get(user=self.request.user, ordered=False)
         if order.billing_address:
 
@@ -239,10 +244,10 @@ class PaymentView(View):
                 data=data
             )
 
-            data = response.json()
+            response_json = response.json()
 
-            session_id = data['id']
-            session_data = data['sessionData']
+            session_id = response_json['id']
+            session_data = response_json['sessionData']
 
             context = {
                 'order': order,
@@ -258,105 +263,42 @@ class PaymentView(View):
             return redirect("core:checkout")
 
 
-def post(self, *args, **kwargs):
-    order = Order.objects.get(user=self.request.user, ordered=False)
-    form = PaymentForm(self.request.POST)
-    userprofile = UserProfile.objects.get(user=self.request.user)
-    if form.is_valid():
-        token = form.cleaned_data.get('stripeToken')
-        save = form.cleaned_data.get('save')
-        use_default = form.cleaned_data.get('use_default')
+class PaymentDetails(View):
+    def post(self, request, *args, **kwargs):
+        order = Order.objects.get(user=self.request.user, ordered=False)
+        url = "https://checkout-test.adyen.com/v68/payments/details"
+        api_key = environ.get('ADYEN_API_KEY')
+        redirectResult = request.POST.get("redirectResult")
+        merchant_account = environ.get('ADYEN_MERCHANT_ACCOUNT_NAME')
+        amount_value = int(order.get_total()*100)
+        amount_currency = 'USD'
+        country_code = 'NL'
+        payment_reference = 'alvin_checkoutChallenge'
+        data = {"details": {"redirectResult": redirectResult}, "paymentData": {
+                "merchantAccount": merchant_account, "amount": {"value": amount_value, "currency": amount_currency}}
+                }
 
-        if save:
-            if userprofile.stripe_customer_id != '' and userprofile.stripe_customer_id is not None:
-                customer = stripe.Customer.retrieve(
-                    userprofile.stripe_customer_id)
-                customer.sources.create(source=token)
+        data = json.dumps(data)
 
-            else:
-                customer = stripe.Customer.create(
-                    email=self.request.user.email,
-                )
-                customer.sources.create(source=token)
-                userprofile.stripe_customer_id = customer['id']
-                userprofile.one_click_purchasing = True
-                userprofile.save()
+        response = requests.post(
+            url,
+            headers={
+                'x-API-key': api_key,
+                'content-type': 'application/json'
+            },
+            data=data
+        )
 
-        amount = int(order.get_total() * 100)
+        return JsonResponse(response.json())
 
-        try:
 
-            if use_default or save:
-                # charge the customer because we cannot charge the token more than once
-                pass
-            else:
-                # charge once off on the token
-                pass
-            # create the payment
-            payment = Payment()
-            payment.stripe_charge_id = charge['id']
-            payment.user = self.request.user
-            payment.amount = order.get_total()
-            payment.save()
+class PaymentWebhook(View):
+    def post(self, request, *args, **kwargs):
+        data = request.body.decode('utf-8')
+        data = json.loads(data)
+        # do work with data
 
-            # assign the payment to the order
-
-            order_items = order.items.all()
-            order_items.update(ordered=True)
-            for item in order_items:
-                item.save()
-
-            order.ordered = True
-            order.payment = payment
-            order.ref_code = create_ref_code()
-            order.save()
-
-            messages.success(self.request, "Your order was successful!")
-            return redirect("/")
-
-        except stripe.error.CardError as e:
-            body = e.json_body
-            err = body.get('error', {})
-            messages.warning(self.request, f"{err.get('message')}")
-            return redirect("/")
-
-        except stripe.error.RateLimitError as e:
-            # Too many requests made to the API too quickly
-            messages.warning(self.request, "Rate limit error")
-            return redirect("/")
-
-        except stripe.error.InvalidRequestError as e:
-            # Invalid parameters were supplied to Stripe's API
-            print(e)
-            messages.warning(self.request, "Invalid parameters")
-            return redirect("/")
-
-        except stripe.error.AuthenticationError as e:
-            # Authentication with Stripe's API failed
-            # (maybe you changed API keys recently)
-            messages.warning(self.request, "Not authenticated")
-            return redirect("/")
-
-        except stripe.error.APIConnectionError as e:
-            # Network communication with Stripe failed
-            messages.warning(self.request, "Network error")
-            return redirect("/")
-
-        except stripe.error.StripeError as e:
-            # Display a very generic error to the user, and maybe send
-            # yourself an email
-            messages.warning(
-                self.request, "Something went wrong. You were not charged. Please try again.")
-            return redirect("/")
-
-        except Exception as e:
-            # send an email to ourselves
-            messages.warning(
-                self.request, "A serious error occurred. We have been notifed.")
-            return redirect("/")
-
-    messages.warning(self.request, "Invalid data received")
-    return redirect("/payment/stripe/")
+        return JsonResponse({'status': 'ok', 'data': data})
 
 
 class HomeView(ListView):
